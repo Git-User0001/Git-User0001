@@ -178,9 +178,12 @@ interface TransactionModalProps {
   currency: Currency;
   isAnalyzing: boolean;
   onAnalyze: (file: File) => void;
+  prefillData?: any;
 }
 
-const TransactionModal: React.FC<TransactionModalProps> = ({ isOpen, onClose, onSave, currency, isAnalyzing, onAnalyze }) => {
+const TransactionModal: React.FC<TransactionModalProps> = ({ 
+  isOpen, onClose, onSave, currency, isAnalyzing, onAnalyze, prefillData 
+}) => {
   const [data, setData] = useState({
     amount: '',
     merchant: '',
@@ -190,6 +193,19 @@ const TransactionModal: React.FC<TransactionModalProps> = ({ isOpen, onClose, on
     notes: '',
     isHoliday: false
   });
+
+  // Auto-fill when prefillData changes
+  useEffect(() => {
+    if (prefillData) {
+      setData(prev => ({
+        ...prev,
+        amount: prefillData.amount ? prefillData.amount.toString() : prev.amount,
+        merchant: prefillData.merchant || prev.merchant,
+        date: prefillData.date || prev.date,
+        category: prefillData.category || prev.category
+      }));
+    }
+  }, [prefillData]);
 
   if (!isOpen) return null;
 
@@ -756,6 +772,7 @@ const App: React.FC = () => {
   const [showSettings, setShowSettings] = useState(false);
   const [showAddModal, setShowAddModal] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [analyzedData, setAnalyzedData] = useState<any>(null);
 
   // Persistence
   useEffect(() => {
@@ -771,6 +788,7 @@ const App: React.FC = () => {
     const newTx: Transaction = { ...t, id: Date.now().toString() };
     setTransactions(prev => [newTx, ...prev]);
     setShowAddModal(false);
+    setAnalyzedData(null); // Clear after adding
   };
 
   const handleAnalyzeReceipt = async (file: File) => {
@@ -787,8 +805,6 @@ const App: React.FC = () => {
       setIsAnalyzing(false);
     }
   };
-
-  const [analyzedData, setAnalyzedData] = useState<any>(null);
 
   if (!settings.hasCompletedOnboarding) {
     return (
@@ -863,31 +879,11 @@ const App: React.FC = () => {
           currency={settings.currency}
           isAnalyzing={isAnalyzing}
           onAnalyze={handleAnalyzeReceipt}
+          prefillData={analyzedData}
         />
-      )}
-      
-      {/* Hidden Data Injector for Modal */}
-      {showAddModal && analyzedData && (
-        <DataInjector modalSetter={setAnalyzedData} data={analyzedData} />
       )}
     </div>
   );
 };
-
-// Helper component to bridge the gap between App state and Modal internal state without complex Context
-// In a real app, TransactionModal would accept `initialData` prop.
-const DataInjector = ({ modalSetter, data }: any) => {
-  useEffect(() => {
-    // This is a bit of a hack to simulate filling the form. 
-    // Ideally we pass data into TransactionModal directly.
-    // Let's assume TransactionModal has been updated to handle this via a hypothetical prop we forgot to type, 
-    // OR we just alert the user for now.
-    
-    // Actually, let's just show an alert.
-    alert(`Analyzed! Found: ${data.merchant} - ${data.amount}. Please ensure details are correct in the form.`);
-    modalSetter(null); // Clear it
-  }, [data, modalSetter]);
-  return null;
-}
 
 export default App;
