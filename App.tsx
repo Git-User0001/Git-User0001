@@ -220,17 +220,8 @@ const TransactionModal: React.FC<TransactionModalProps> = ({ isOpen, onClose, on
     if (e.target.files && e.target.files[0]) {
       const file = e.target.files[0];
       onAnalyze(file);
-      
-      // Temporary simple parsing simulation for UX if not hooked up to live API in demo
-      // In real code, the parent component handles the async API call and updates state via a prop or context
-      // Here we rely on the parent to push data back down if needed, but for now we wait.
     }
   };
-  
-  // Expose a method for parent to update this form? 
-  // For simplicity in this structure, we'll assume the parent *can't* easily update this local state 
-  // without context. Let's lift the state up or use a key to reset.
-  // Actually, better pattern: Pass `initialData` if available. 
   
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
@@ -470,10 +461,11 @@ const Insights = ({ settings, transactions }: any) => {
     
     const randomMessage = messageList[Math.floor(Math.random() * messageList.length)];
 
-    // Chart Data (Simplified for demo)
+    // Chart Data
     const chartData = transactions.reduce((acc: any[], t: Transaction) => {
       const date = new Date(t.date);
       const key = view === 'weekly' ? `Day ${date.getDate()}` : `${date.toLocaleString('default', { month: 'short' })}`;
+      
       const existing = acc.find(item => item.name === key);
       
       if (existing) {
@@ -492,6 +484,120 @@ const Insights = ({ settings, transactions }: any) => {
     }, []);
 
     return { status, randomMessage, chartData };
+  }, [transactions, view, settings]);
+
+  const highlights = useMemo(() => {
+    const now = new Date();
+    const currentMonth = now.getMonth();
+    const currentYear = now.getFullYear();
+    const generated: React.ReactNode[] = [];
+    
+    const getExpenses = (startDate: Date, endDate: Date) => 
+      transactions.filter((t: any) => {
+        const d = new Date(t.date);
+        return t.type === 'expense' && d >= startDate && d <= endDate;
+      });
+      
+    const sum = (txs: any[]) => txs.reduce((a, b) => a + b.amount, 0);
+
+    // 1. Comparison
+    if (view === 'weekly') {
+      const startThisWeek = new Date(now);
+      startThisWeek.setDate(now.getDate() - 6);
+      startThisWeek.setHours(0,0,0,0);
+      
+      const startLastWeek = new Date(startThisWeek);
+      startLastWeek.setDate(startLastWeek.getDate() - 7);
+      
+      const endLastWeek = new Date(startThisWeek);
+      endLastWeek.setDate(endLastWeek.getDate() - 1);
+      endLastWeek.setHours(23,59,59,999);
+
+      const thisWeekTotal = sum(getExpenses(startThisWeek, now));
+      const lastWeekTotal = sum(getExpenses(startLastWeek, endLastWeek));
+
+      if (lastWeekTotal > 0) {
+        const diff = thisWeekTotal - lastWeekTotal;
+        const isLess = diff < 0;
+        const color = isLess ? 'text-teal' : 'text-coral';
+        const word = isLess ? 'less' : 'more';
+        generated.push(
+          <p key="comp" className="text-sm">
+            You spent <span className={`font-bold ${color}`}>{formatMoney(Math.abs(diff), settings.currency)} {word}</span> this week than last week.
+          </p>
+        );
+      }
+    } else {
+      // Monthly comparison (Date to Date)
+      const startThisMonth = new Date(currentYear, currentMonth, 1);
+      const startLastMonth = new Date(currentYear, currentMonth - 1, 1);
+      
+      // Compare up to current day in previous month
+      const endLastMonthComparison = new Date(startLastMonth);
+      endLastMonthComparison.setDate(Math.min(now.getDate(), new Date(currentYear, currentMonth, 0).getDate()));
+
+      const thisMonthTotal = sum(getExpenses(startThisMonth, now));
+      const lastMonthTotal = sum(getExpenses(startLastMonth, endLastMonthComparison));
+
+      if (lastMonthTotal > 0) {
+        const diff = thisMonthTotal - lastMonthTotal;
+        const isLess = diff < 0;
+        const color = isLess ? 'text-teal' : 'text-coral';
+        const word = isLess ? 'less' : 'more';
+        generated.push(
+          <p key="comp" className="text-sm">
+            You spent <span className={`font-bold ${color}`}>{formatMoney(Math.abs(diff), settings.currency)} {word}</span> than this time last month.
+          </p>
+        );
+      }
+    }
+
+    // 2. Category Analysis
+    let periodStart = new Date();
+    if (view === 'weekly') periodStart.setDate(periodStart.getDate() - 7);
+    else periodStart = new Date(currentYear, currentMonth, 1);
+    
+    const periodExpenses = getExpenses(periodStart, now);
+    if (periodExpenses.length > 0) {
+      const catTotals: Record<string, number> = {};
+      periodExpenses.forEach((t: any) => {
+        catTotals[t.category] = (catTotals[t.category] || 0) + t.amount;
+      });
+      const sortedCats = Object.entries(catTotals).sort((a,b) => b[1] - a[1]);
+      const topCat = sortedCats[0];
+      
+      if (topCat) {
+        generated.push(
+          <p key="cat" className="text-sm">
+            Your highest spending category is <span className="font-bold text-coral">{topCat[0]}</span> ({formatMoney(topCat[1], settings.currency)}).
+          </p>
+        );
+      }
+    }
+
+    // 3. Savings/Income
+    const recentSavings = transactions.filter((t: any) => 
+       t.type === 'savings' && new Date(t.date) >= periodStart
+    ).reduce((a:any, b:any) => a + b.amount, 0);
+
+    if (recentSavings > 0) {
+      generated.push(
+        <p key="save" className="text-sm">You saved <span className="font-bold text-teal">{formatMoney(recentSavings, settings.currency)}</span> this period. Nice!</p>
+      );
+    }
+    
+    const recentExtra = transactions.filter((t: any) => 
+       t.type === 'extra_income' && new Date(t.date) >= periodStart
+    );
+    if (recentExtra.length > 0) {
+       generated.push(<p key="extra" className="text-sm">You received extra income recently! 🎉</p>);
+    }
+
+    if (generated.length === 0) {
+      generated.push(<p key="empty" className="text-sm opacity-60">Start adding transactions to see personal insights here.</p>);
+    }
+
+    return generated;
   }, [transactions, view, settings]);
 
   const statusColors = {
@@ -516,11 +622,7 @@ const Insights = ({ settings, transactions }: any) => {
       {/* Text Summaries */}
       <GlassCard className="space-y-2">
          <h3 className="font-bold text-sm text-gray-500 uppercase">Highlights</h3>
-         <p className="text-sm">You spent <span className="font-bold text-teal">less</span> this week than last week.</p>
-         <p className="text-sm">Your highest spending category is <span className="font-bold text-coral">Food & Dining</span>.</p>
-         {transactions.some((t:any) => t.type === 'extra_income') && (
-           <p className="text-sm">You received extra income this month! 🎉</p>
-         )}
+         {highlights}
       </GlassCard>
 
       {/* Controls */}
@@ -678,17 +780,6 @@ const App: React.FC = () => {
       const mimeType = file.type;
       const data = await analyzeReceiptImage(base64, mimeType);
       
-      // We need to inject this data into the modal form. 
-      // Since the modal controls its own state, we force a re-mount or we'd need context/lifted state.
-      // For this single-file output constraint, we will alert the user and auto-fill by pre-populating via a temporary method
-      // Ideally, the modal should listen to an external state or prop change.
-      // Let's toggle the modal off and on with new init data? No, that's jarring.
-      // We will assume the Modal component has a way to receive this via a Ref or Prop update, 
-      // but for this implementation, we will pass a `lastAnalyzedData` prop to the modal.
-      
-      // Hack for this structure: We just alert success. In a real app, I'd lift the form state to App.tsx.
-      // But wait! I can just modify the modal to accept initialData.
-      // Let's modify the Modal to accept `analyzedData`.
       setAnalyzedData(data);
     } catch (e) {
       alert("Could not analyze receipt. Please enter manually.");
@@ -698,11 +789,6 @@ const App: React.FC = () => {
   };
 
   const [analyzedData, setAnalyzedData] = useState<any>(null);
-
-  // Injection of analyzed data into modal
-  // Note: We need to modify TransactionModal to watch for `analyzedData` changes.
-  // We'll patch it in the component above using a key to force reset or useEffect.
-  // Simplest: Add useEffect in TransactionModal.
 
   if (!settings.hasCompletedOnboarding) {
     return (
@@ -777,9 +863,6 @@ const App: React.FC = () => {
           currency={settings.currency}
           isAnalyzing={isAnalyzing}
           onAnalyze={handleAnalyzeReceipt}
-          // The modal will need to be wrapped to handle the data injection
-          // For this specific constraint, I'm dynamically updating the Modal component internally to listen to this
-          // See TransactionModal implementation (adding prop for data injection would be best practice)
         />
       )}
       
